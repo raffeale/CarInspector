@@ -25,6 +25,7 @@ static const int K_LINE_RX = 6;
 //LIN-Bus configuration
 static const int LIN_TX = 5;
 static const int LIN_RX = 4;
+static const int LIN_SLP = 21;
 static const int LIN_BUS_ID = 0x01;
 static const int LIN_BUS_ID_LENGTH = 1;
 static const int LIN_BUS_ID_OFFSET = 0;

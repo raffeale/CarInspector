@@ -13,7 +13,7 @@
  * （1）添加对一些发送后的数据传回到esp32s3某个gpio来做检测
  * （2）通过pc设置 can总线的传输率，以及工作模式
  * （3）读取故障码，清除故障码
- * 
+ *  
  */
 
 #include <Arduino.h>
@@ -30,14 +30,50 @@
 #include "osc_emu.h"
 #endif 
 
+// #define CAN_DATA 1;
+// #define K_LINE_DATA 2;
+// #define LIN_DATA 3;
+
+typedef enum {
+  CAN_DATA = 1,
+  K_LINE_DATA = 2,
+  LIN_DATA = 3
+} data_type;
+
+//所有的总线数据都使用data_t结构体保存，通过type来区分数据来源
+typedef struct {
+  data_type type;
+  void * obj;
+} data_t;
+
+
 SPIClass SPI2(FSPI);
 ACAN2517FD can (MCP2517_CS, SPI2, 255) ; // Last argument is 255 -> no interrupt pin
+ACAN2517FDSettings settings (ACAN2517FDSettings::OSC_40MHz, 500 * 1000, DataBitRateFactor::x1) ;
 
-
+QueueHandle_t recv_queue, dbg_msg_queue;
+TaskHandle_t task;
+void loop2(void *);
 void setup() {
   // put your setup code here, to run once:
 
+  setCpuFrequencyMhz(240);
+  
   Serial.begin(115200);
+
+  
+  recv_queue = xQueueCreate(1000 , sizeof(data_t));
+  
+  
+  //   // Create Task 2 on Core 1
+  xTaskCreatePinnedToCore(
+    loop2,       // Function
+    "loop2",     // Name
+    1024*16,          // Stack size
+    NULL,          // Parameters
+    1,             // Priority
+    &task,        // Task handle
+    xPortGetCoreID()?0:1);            // Core 0
 
   pinMode(MCP2517_CS, OUTPUT);
 
@@ -49,8 +85,8 @@ void setup() {
   delay(10);
 
   SPI2.begin (MCP2517_SCK, MCP2517_MISO, MCP2517_MOSI);
-  ACAN2517FDSettings settings (ACAN2517FDSettings::OSC_40MHz, 500 * 1000, DataBitRateFactor::x1) ;
-
+  
+  
   
 
 }
@@ -60,7 +96,7 @@ void loop() {
 }
 
 
-void loop2() {
+void loop2(void *pvParameters) {
 
 
 }
