@@ -14,9 +14,23 @@
  * （2）通过pc设置 can总线的传输率，以及工作模式
  * （3）读取故障码，清除故障码
  *  
+ * 
+ * 
+ * ACAN2517FD 驱动中 在使用esp32开发板的时候没有使用中断来完成数据接收和发送，因为esp32的中断处理函数中可能导致watchdog的超时，
+ * 会导致Guru meditation 错误。这个问题不知道在esp32s3中是否解决，这个问题主要和arduino-sdk有关，在overflowstack上看到有人提起，
+ * 在旧版本的esp32-arduino sdk中就没有这个问题。
+ * Downgrade the ESp32 by expressive system library from 2.0.6 to 2.0.3.
  */
 
 #include <Arduino.h>
+
+// #include <esp32-hal-bt.h>
+// #include <esp32-hal-wifi.h>
+
+#include "esp_wifi.h"
+#include "esp_bt.h"
+
+//#include "esp_psram.h"
 
 #include "config.h"
 
@@ -57,18 +71,36 @@ void loop2(void *);
 void setup() {
   // put your setup code here, to run once:
 
+    
+    if(esp_wifi_deinit() != ESP_OK) {
+      delay(2000);
+      Serial.println("WIFI deinit failed");
+      delay(100000);
+    }
+
+    if(esp_bt_controller_disable() != ESP_OK) {
+      delay(2000);
+      Serial.println("BT disable failed");
+      delay(100000);
+    }
+
+    if(esp_bt_controller_deinit() != ESP_OK) {
+      delay(2000);
+      Serial.println("BT deinit failed");
+      delay(100000);
+    }
+
+    esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+
   setCpuFrequencyMhz(240);
-  
   Serial.begin(115200);
 
-  
   recv_queue = xQueueCreate(1000 , sizeof(data_t));
-  
-  
+    
   //   // Create Task 2 on Core 1
   xTaskCreatePinnedToCore(
     loop2,       // Function
-    "loop2",     // Name
+    "core2",     // Name
     1024*16,          // Stack size
     NULL,          // Parameters
     1,             // Priority
@@ -93,10 +125,18 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
+
+  
 }
 
 
 void loop2(void *pvParameters) {
+  while(1) {
+    
+    
+    
+    delayMicroseconds(1);
 
+  }
 
 }
