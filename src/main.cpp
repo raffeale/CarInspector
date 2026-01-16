@@ -24,6 +24,8 @@
 
 #include <Arduino.h>
 
+#include "HardwareSerial.h"
+
 // #include <esp32-hal-bt.h>
 // #include <esp32-hal-wifi.h>
 
@@ -34,8 +36,25 @@
 
 #include "config.h"
 
+
+//sdio mmc driver
+#include "FS.h"
+#include "SD_MMC.h"
+
 #include <SPI.h>
+
+//mcp2518 driver
 #include <ACAN2517FD.h>
+
+//LIN bus library
+#include <LINBus_stack.h>
+
+
+#include "tfcard.h"
+
+#include "commandProccessor.h"
+
+
 
 /**  当晶振不能正常启振，采用gpio输出一个20Mhz 50%占空比的方波来驱动mcp2518 **/
 //#define EMU20Mhz_OSC 1
@@ -47,6 +66,19 @@
 // #define CAN_DATA 1;
 // #define K_LINE_DATA 2;
 // #define LIN_DATA 3;
+
+
+typedef struct {
+  uint8_t data_len;
+  uint8_t data[8];
+} lin_data;
+
+typedef struct {
+  uint8_t data_len;
+  uint8_t data[8];
+} kline_data;
+
+
 
 typedef enum {
   CAN_DATA = 1,
@@ -64,40 +96,51 @@ typedef struct {
 SPIClass SPI2(FSPI);
 ACAN2517FD can (MCP2517_CS, SPI2, 255) ; // Last argument is 255 -> no interrupt pin
 ACAN2517FDSettings settings (ACAN2517FDSettings::OSC_40MHz, 500 * 1000, DataBitRateFactor::x1) ;
+//LIN bus  use Serial1 gpio:15,16
 
-QueueHandle_t recv_queue, dbg_msg_queue;
+//HardwareSerial LIN(1);
+HardwareSerial KLINE(2);
+
+const int LIN_BAUD = 19200;
+
+LINBus_stack LinBus(Serial1,LIN_BAUD);
+
+QueueHandle_t recv_queue;
+
 TaskHandle_t task;
+
+TfCard tf;
+
 void loop2(void *);
 void setup() {
   // put your setup code here, to run once:
 
-    
-    if(esp_wifi_deinit() != ESP_OK) {
-      delay(2000);
-      Serial.println("WIFI deinit failed");
-      delay(100000);
-    }
+  esp_wifi_deinit();
+  esp_bt_controller_disable();
+  esp_bt_controller_deinit();
+  esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
 
-    if(esp_bt_controller_disable() != ESP_OK) {
-      delay(2000);
-      Serial.println("BT disable failed");
-      delay(100000);
-    }
+  //set ata6563 stby pin to LOW for entering normal mode
+  pinMode(ATA6363_STBY , LOW);
 
-    if(esp_bt_controller_deinit() != ESP_OK) {
-      delay(2000);
-      Serial.println("BT deinit failed");
-      delay(100000);
-    }
-
-    esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+  //set tja2019 slp pin to HIGH for entering normal mode
+  pinMode(TJA2019T_SLP , HIGH);
 
   setCpuFrequencyMhz(240);
   Serial.begin(115200);
+  
+
+  //LIN.begin(115200 , SERIAL_8N1);
+  
+  //LIN总线一般工作的速率：低速2400bps，中速9600bps，高速19200bps
+  //LinBus.begin();
+  LinBus.setupSerial();
+
+  KLINE.begin(115200 , SERIAL_8N1 ,6 ,7);
 
   recv_queue = xQueueCreate(1000 , sizeof(data_t));
-    
-  //   // Create Task 2 on Core 1
+  
+  //   // Create Task 2 on another Core
   xTaskCreatePinnedToCore(
     loop2,       // Function
     "core2",     // Name
@@ -113,26 +156,101 @@ void setup() {
     output20Mhz_osc1();
   #endif
   
-  // wait for OSC to stabilize
+
+
+  // wait for OSC to stabilize,the OSC need 5ms to stable
   delay(10);
 
   SPI2.begin (MCP2517_SCK, MCP2517_MISO, MCP2517_MOSI);
-  
-  
-  
 
 }
 
+/**
+ * main core logic:
+ * 1.read can bus data and put it to queue
+ * 2.read kline data and put it to queue
+ * 3.read lin data and put it to queue
+ * 
+ * add internal loopback mode for mcp2518 self-test mode
+ * 
+ */
 void loop() {
-  // put your main code here, to run repeatedly:
-
   
+  //read can bus data and put it to queue
+  if(can.available()) {
+    CANFDMessage message;
+    can.receive(message);
+    CANFDMessage * msg = new CANFDMessage;
+    *msg = message;
+    data_t * can_data = new data_t{
+      .type = CAN_DATA,
+      .obj = (void *) msg,
+    };
+
+    xQueueSend(recv_queue , can_data , 1);
+
+  }
+
+ 
+
+
+  //read lin bus data and put it to queue
+  /**
+   * 这里需要注意LIN总线的同步 前13位为显性电平(13个低电平,紧接一个高电平)，然后的SYNC场(始终为0x55),
+    紧接着时pid场，pid的范围0x00-0x59, ||  0x60,0x61 为诊断请求使用。 0x3c代表休眠请求。
+    pid后面就是数据场，这个数据大小应该是固定的，但需要测量，测试时候可以直接使用串口读取来观察数据的长度，一般最多8个字节
+  **/
+  if (Serial1.available())
+  {
+    unsigned long timeout = 10;
+    size_t read_bytes = 0;
+    Serial1.setTimeout(timeout);
+    char buffer[512] = {};
+    memset(buffer,0x0,512);
+    read_bytes = Serial1.readBytes(buffer , 512);
+    String debug_str = "";
+
+    for(int i=0;i<read_bytes;i++) {
+      debug_str += String(buffer[i],16)+" ";
+    }
+    
+    //真是读取的数据大小,使用LinBus来读取时候会自动进行效验
+    //size_t ret_read = 0;
+    //LinBus.read((byte *)buffer , 8 , &ret_read);
+
+  }
+  
+
+
+  //read k-line data and put it to queue
+
+
+
+   //process all bus sending data queue
+   //这里需要处理所有总线要发送的数据队列逻辑，数据将从send_queue队列中读取，处理之后需要释放数据所占的内存
+
+
+
 }
 
 
+/**
+ * core2 logic:
+ * 1.save queue data to file in tf card 
+ * 2.process Serial command 
+ * 3. print data debug information in Serial when debug command turn on
+ * 4. send data to any BUS  (save the sending data to send_queue ,
+ * core 0 will processing these data and send it to correspending bus)
+ * 
+ */
 void loop2(void *pvParameters) {
   while(1) {
+
+    data_t message;
+    xQueueReceive( recv_queue , &message, 1);
     
+
+    //delete 
     
     
     delayMicroseconds(1);

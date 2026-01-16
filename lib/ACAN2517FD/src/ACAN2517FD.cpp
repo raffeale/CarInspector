@@ -6,6 +6,7 @@
 //------------------------------------------------------------------------------
 
 #include <ACAN2517FD.h>
+#include "esp_task_wdt.h"
 
 //------------------------------------------------------------------------------
 
@@ -914,6 +915,12 @@ void ACAN2517FD::isr_poll_core (void) {
           receiveInterrupt () ;
           handled = true ;
         }
+
+        // #ifdef ARDUINO_ARCH_ESP32
+        //    esp_task_wdt_reset();
+        // #endif
+       
+
         if ((it & (1 << 10)) != 0) { // Transmit Attempt interrupt
         //--- Clear Pending Transmit Attempt interrupt bit
           writeRegister8Assume_SPI_transaction (FIFOSTA_REGISTER (TRANSMIT_FIFO_INDEX), ~ (1 << 4)) ;
