@@ -51,3 +51,12 @@ static const int LIN_BUS_ID_MATCH_OFFSET = 0;
 bool self_test_mode = false;
 bool debug_mode = false;
 
+// bool print_can_message = false;
+// bool print_lin_message = false;
+// bool print_kin_message = false;
+
+//print all bus data 
+bool print_bus_message = false;
+
+bool print_debug_info = false;
+bool print_debug_error = false;

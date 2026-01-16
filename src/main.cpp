@@ -15,6 +15,10 @@
  * （3）读取故障码，清除故障码
  *  
  * 
+ * Serial 默认的输出可以作为上位机的调试信息与数据分析信息，当所有信息输出的时候就需要一个标准。
+ * 这里将串口 用于上位机的数据输出与普通调试信息输出进行区分。
+ * 调试信息输出调用debug_info函数， 调试数据输出调用print_xxx_data函数输出
+ *  上位机需要判断串口输出的数据前面的几个字符来区分是数据信息，还是调试信息
  * 
  * ACAN2517FD 驱动中 在使用esp32开发板的时候没有使用中断来完成数据接收和发送，因为esp32的中断处理函数中可能导致watchdog的超时，
  * 会导致Guru meditation 错误。这个问题不知道在esp32s3中是否解决，这个问题主要和arduino-sdk有关，在overflowstack上看到有人提起，
@@ -70,13 +74,13 @@
 
 typedef struct {
   uint8_t data_len;
-  uint8_t data[8];
-} lin_data;
+  char * data;
+} lin_bus_data;
 
 typedef struct {
   uint8_t data_len;
-  uint8_t data[8];
-} kline_data;
+  char * data;
+} kline_bus_data;
 
 
 
@@ -93,6 +97,28 @@ typedef struct {
 } data_t;
 
 
+void debug_info(String str){
+  Serial.println("|info:"+str);
+}
+
+void debug_err(String str){
+  Serial.println("|error:"+str);
+}
+
+void print_lin_data(String str) {
+  Serial.println("|data-lin:"+str);
+}
+
+void print_can_data(String str) {
+  Serial.println("|data-can:"+str);
+}
+
+void print_kline_data(String str) {
+  Serial.println("|data-kline:"+str);
+}
+
+
+
 SPIClass SPI2(FSPI);
 ACAN2517FD can (MCP2517_CS, SPI2, 255) ; // Last argument is 255 -> no interrupt pin
 ACAN2517FDSettings settings (ACAN2517FDSettings::OSC_40MHz, 500 * 1000, DataBitRateFactor::x1) ;
@@ -102,13 +128,10 @@ ACAN2517FDSettings settings (ACAN2517FDSettings::OSC_40MHz, 500 * 1000, DataBitR
 HardwareSerial KLINE(2);
 
 const int LIN_BAUD = 19200;
-
 LINBus_stack LinBus(Serial1,LIN_BAUD);
 
 QueueHandle_t recv_queue;
-
 TaskHandle_t task;
-
 TfCard tf;
 
 void loop2(void *);
@@ -127,6 +150,9 @@ void setup() {
   pinMode(TJA2019T_SLP , HIGH);
 
   setCpuFrequencyMhz(240);
+
+  
+  Serial.setTxBufferSize(512);
   Serial.begin(115200);
   
 
@@ -138,7 +164,7 @@ void setup() {
 
   KLINE.begin(115200 , SERIAL_8N1 ,6 ,7);
 
-  recv_queue = xQueueCreate(1000 , sizeof(data_t));
+  recv_queue = xQueueCreate(1000 , sizeof(data_t *));
   
   //   // Create Task 2 on another Core
   xTaskCreatePinnedToCore(
@@ -162,6 +188,10 @@ void setup() {
   delay(10);
 
   SPI2.begin (MCP2517_SCK, MCP2517_MISO, MCP2517_MOSI);
+
+
+  //clear all data on LIN bus
+  Serial1.flush();
 
 }
 
@@ -187,7 +217,8 @@ void loop() {
       .obj = (void *) msg,
     };
 
-    xQueueSend(recv_queue , can_data , 1);
+    xQueueSend(recv_queue , &can_data , 1);
+
 
   }
 
@@ -197,24 +228,44 @@ void loop() {
   //read lin bus data and put it to queue
   /**
    * 这里需要注意LIN总线的同步 前13位为显性电平(13个低电平,紧接一个高电平)，然后的SYNC场(始终为0x55),
-    紧接着时pid场，pid的范围0x00-0x59, ||  0x60,0x61 为诊断请求使用。 0x3c代表休眠请求。
+    紧接着时pid场，pid的范围 0-59 (十进制，因为pid只占用5位，低两位为p1,p0), ||  60,61 为诊断请求使用。 0x3c代表休眠请求。
     pid后面就是数据场，这个数据大小应该是固定的，但需要测量，测试时候可以直接使用串口读取来观察数据的长度，一般最多8个字节
   **/
   if (Serial1.available())
   {
-    unsigned long timeout = 10;
+    
+    //unsigned long timeout = 1;
     size_t read_bytes = 0;
-    Serial1.setTimeout(timeout);
-    char buffer[512] = {};
-    memset(buffer,0x0,512);
-    read_bytes = Serial1.readBytes(buffer , 512);
-    String debug_str = "";
+    //Serial1.setTimeout(timeout);
+    int read_length = 8;
+    char * buffer = new char[read_length];
+    
+    memset(buffer,0x0,8);
+    read_bytes = Serial1.readBytes(buffer , read_length);
+    
+    lin_bus_data * data = new lin_bus_data{.data_len=8,.data=buffer};
+    
+    data_t * lin_bus_data = new data_t{
+      .type = LIN_DATA,
+      .obj = (void *) data,
+    };
+    
+    xQueueSend(recv_queue , &lin_bus_data , 1);
 
-    for(int i=0;i<read_bytes;i++) {
-      debug_str += String(buffer[i],16)+" ";
+
+    if(print_bus_message) {
+
+      String debug_str = "";
+
+      for(int i=0;i<read_bytes;i++) {
+        debug_str += String(buffer[i],16)+" ";
+      }
+
+      print_lin_data(debug_str);
+    
     }
     
-    //真是读取的数据大小,使用LinBus来读取时候会自动进行效验
+    //真正读取的数据大小,使用LinBus来读取时候会自动进行效验
     //size_t ret_read = 0;
     //LinBus.read((byte *)buffer , 8 , &ret_read);
 
@@ -244,15 +295,28 @@ void loop() {
  * 
  */
 void loop2(void *pvParameters) {
+  
   while(1) {
 
-    data_t message;
+    /**
+     * 处理完message对象，需要对该对象的内存区域释放，也要释放对象里的.obj元素
+     */
+    data_t * message;
     xQueueReceive( recv_queue , &message, 1);
     
 
-    //delete 
-    
-    
+    //释放内存
+    if(message->type == K_LINE_DATA || message->type == LIN_DATA ) {
+      kline_bus_data * ptr =  (kline_bus_data *) message->obj;
+      delete ptr->data;
+    }else if(message->type == LIN_DATA ) {
+      lin_bus_data * ptr =  (lin_bus_data *) message->obj;
+      delete ptr->data;
+    }
+
+    delete message->obj;
+    delete message;
+
     delayMicroseconds(1);
 
   }
