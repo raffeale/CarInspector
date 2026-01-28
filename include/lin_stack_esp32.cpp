@@ -367,11 +367,11 @@ int lin_stack_esp32::busWakeUp()
 }
 
 /* Create the Lin ID parity */
-#define BIT(data,shift) ((ident&(1<<shift))>>shift)
+#define NEWBIT(data,shift) ((ident&(1<<shift))>>shift)
 byte lin_stack_esp32::calcIdentParity(byte ident)
 {
-  byte p0 = BIT(ident,0) ^ BIT(ident,1) ^ BIT(ident,2) ^ BIT(ident,4);
-  byte p1 = ~(BIT(ident,1) ^ BIT(ident,3) ^ BIT(ident,4) ^ BIT(ident,5));
+  byte p0 = NEWBIT(ident,0) ^ NEWBIT(ident,1) ^ NEWBIT(ident,2) ^ NEWBIT(ident,4);
+  byte p1 = ~(NEWBIT(ident,1) ^ NEWBIT(ident,3) ^ NEWBIT(ident,4) ^ NEWBIT(ident,5));
   return (p0 | (p1<<1))<<6;
 }
 

@@ -976,8 +976,6 @@ void ACAN2517FD::transmitInterrupt (void) { // Generated if hardware transmit FI
 
 //------------------------------------------------------------------------------
 /**
- * @bug this funciton may has a bug which the CanMessage will store in stack memory , when the function return , 
- * the stack of function will drop the variables, so it should new a CanMessage in heap memory.
  */
 void ACAN2517FD::receiveInterrupt (void) {
   const uint16_t ramAddress = uint16_t (0x400 + readRegister32Assume_SPI_transaction (FIFOUA_REGISTER (RECEIVE_FIFO_INDEX))) ;

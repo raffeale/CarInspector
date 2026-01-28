@@ -10,6 +10,27 @@ static const int MCP2517_INT = 9 ;
 static const int MCP2517_RESET = 8 ;
 static const int MCP2517_SPI_SPEED = 10000000;
 
+
+//need change User_Setup.h file to set following params
+// static const int TFT_SCK = 36; //SCK for st7789
+// static const int TFT_MISO = 37; //NC
+// static const int TFT_MOSI = 35;//MOSI for st7789
+// static const int TFT_CS = 45; // CS for st7789
+// static const int TFT_DC = 21; 
+// static const int TFT_RST = 20; //RESET for st7789
+
+//ec11  需要测试 使用gpio47,48作为 按钮按键是否正常工作
+static const int EC11_A = 33;
+static const int EC11_B = 32;
+static const int EC11_BTN = 34;
+static const int EC11_SPEED = 1000;
+static const int EC11_BTN_DEBOUNCE = 50;
+static const int EC11_BTN_LONG_PRESS = 1500;
+static const int EC11_BTN_LONG_PRESS_TIMEOUT = 5000;
+static const int MAIN_BTN = 38;
+
+
+
 #define MCP2518_DEFAULT_WORK_MODE ACAN2517FDSettings::InternalLoopBack
 
 //ata6535 STBY = LOW is normal mode, STBY  = 1 STAND BY mode
